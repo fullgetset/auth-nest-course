@@ -21,6 +21,9 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { AuthResponse } from './dto/auth.dto';
+import { Authorization } from './decorators/authorization.decorator';
+import { Authorized } from './decorators/authorized.decorator';
+import { UserEntity } from 'src/user/entity/user.entity';
 
 @Controller('auth')
 export class AuthController {
@@ -86,5 +89,12 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   logout(@Res({ passthrough: true }) res: Response) {
     return this.authService.logout(res);
+  }
+
+  @Authorization()
+  @Get('me')
+  @HttpCode(HttpStatus.OK)
+  me(@Authorized() user: UserEntity) {
+    return user;
   }
 }
