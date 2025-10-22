@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { UserEntity } from 'src/user/entity/user.entity';
@@ -9,10 +10,10 @@ import { Repository } from 'typeorm';
 import { RegisterRequest } from './dto/register.dto';
 import { hash, verify } from 'argon2';
 import { ConfigService } from '@nestjs/config';
-import { JwtService, JwtSignOptions } from '@nestjs/jwt';
+import { JwtService } from '@nestjs/jwt';
 import type { JwtPayload } from './types/jwt.types';
 import { LoginRequest } from './dto/login.dto';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { isDev } from 'src/utils/is-dev.util';
 
 @Injectable()
@@ -33,7 +34,7 @@ export class AuthService {
     this.JWT_REFRESH_TOKEN_TTL = this.configService.getOrThrow(
       'JWT_REFRESH_TOKEN_TTL',
     );
-    this.JWT_REFRESH_TOKEN_TTL = this.configService.getOrThrow('COOKIE_DOMAIN');
+    this.COOKIE_DOMAIN = this.configService.getOrThrow('COOKIE_DOMAIN');
   }
 
   async login(res: Response, dto: LoginRequest) {
@@ -84,6 +85,39 @@ export class AuthService {
     return this.auth(res, user.id);
   }
 
+  logout(res: Response) {
+    this.setCookie(res, 'refreshToken', new Date(0));
+
+    return 'Вы вышли из системы';
+  }
+
+  async refresh(req: Request, res: Response) {
+    const refreshToken = req.cookies['refreshToken'] as string;
+
+    if (!refreshToken) {
+      throw new UnauthorizedException('Недействительный refresh-токен');
+    }
+
+    const payload: JwtPayload = await this.jwtService.verifyAsync(refreshToken);
+
+    if (payload) {
+      const user = await this.userRepository.findOne({
+        where: {
+          id: payload.id,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!user) {
+        throw new NotFoundException('Пользователь не найден');
+      }
+
+      return this.auth(res, user.id);
+    }
+  }
+
   private auth(res: Response, id: string) {
     const { accessToken, refreshToken } = this.generateTokens(id);
 
@@ -94,15 +128,12 @@ export class AuthService {
 
   private generateTokens(id: string) {
     const payload: JwtPayload = { id };
-    const optionsAccess: JwtSignOptions = {
-      expiresIn: 7200,
-    };
-    const optionsRefresh: JwtSignOptions = {
-      expiresIn: 604800,
-    };
-
-    const accessToken = this.jwtService.sign(payload, optionsAccess);
-    const refreshToken = this.jwtService.sign(payload, optionsRefresh);
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: this.JWT_ACCESS_TOKEN_TTL as '2h',
+    });
+    const refreshToken = this.jwtService.sign(payload, {
+      expiresIn: this.JWT_REFRESH_TOKEN_TTL as '7d',
+    });
 
     return {
       accessToken,
